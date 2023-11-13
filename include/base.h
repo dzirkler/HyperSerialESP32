@@ -2,7 +2,7 @@
 *
 *  MIT License
 *
-*  Copyright (c) 2022 awawa-dev
+*  Copyright (c) 2023 awawa-dev
 *
 *  https://github.com/awawa-dev/HyperSerialESP32
 *
@@ -28,7 +28,9 @@
 #ifndef BASE_H
 #define BASE_H
 
-#if defined(SECOND_SEGMENT_START_INDEX) 
+#include "freertos/semphr.h"
+
+#if defined(SECOND_SEGMENT_START_INDEX)
 	#if !defined(SECOND_SEGMENT_DATA_PIN)
 		#error "Please define SECOND_SEGMENT_DATA_PIN for second segment"
 	#elif !defined(SECOND_SEGMENT_CLOCK_PIN) && !defined(NEOPIXEL_RGBW) && !defined(NEOPIXEL_RGB)
@@ -49,13 +51,16 @@ class Base
 
 	public:
 		// static data buffer for the loop
-		uint8_t buffer[MAX_BUFFER];
+		uint8_t buffer[MAX_BUFFER + 1] = {0};
 		// handle to tasks
-		TaskHandle_t processTaskHandle;
+		TaskHandle_t processDataHandle = nullptr;
+		TaskHandle_t processSerialHandle = nullptr;
+		// semaphore to synchronize them
+		xSemaphoreHandle i2sXSemaphore;
 		// current queue position
-		uint16_t queueCurrent = 0;
+		volatile int queueCurrent = 0;
 		// queue end position
-		volatile uint16_t queueEnd = 0;
+		volatile int queueEnd = 0;
 
 		inline int getLedsNumber()
 		{
@@ -85,23 +90,23 @@ class Base
 				delete ledStrip2;
 				ledStrip2 = nullptr;
 			}
-			
+
 			ledsNumber = count;
 
 			#if defined(SECOND_SEGMENT_START_INDEX)
 				if (ledsNumber > SECOND_SEGMENT_START_INDEX)
-				{					
+				{
 					#if defined(NEOPIXEL_RGBW) || defined(NEOPIXEL_RGB)
 						ledStrip1 = new LED_DRIVER(SECOND_SEGMENT_START_INDEX, DATA_PIN);
 						ledStrip1->Begin();
 						ledStrip2 = new LED_DRIVER2(ledsNumber - SECOND_SEGMENT_START_INDEX, SECOND_SEGMENT_DATA_PIN);
-						ledStrip2->Begin();					
+						ledStrip2->Begin();
 					#else
 						ledStrip1 = new LED_DRIVER(SECOND_SEGMENT_START_INDEX);
 						ledStrip1->Begin(CLOCK_PIN, 12, DATA_PIN, 15);
 						ledStrip2 = new LED_DRIVER2(ledsNumber - SECOND_SEGMENT_START_INDEX);
-						ledStrip2->Begin(SECOND_SEGMENT_CLOCK_PIN, 12, SECOND_SEGMENT_DATA_PIN, 15);					
-					#endif				
+						ledStrip2->Begin(SECOND_SEGMENT_CLOCK_PIN, 12, SECOND_SEGMENT_DATA_PIN, 15);
+					#endif
 				}
 			#endif
 
@@ -114,18 +119,23 @@ class Base
 					ledStrip1 = new LED_DRIVER(ledsNumber);
 					ledStrip1->Begin(CLOCK_PIN, 12, DATA_PIN, 15);
 				#endif
-			}			
+			}
 		}
 
 		/**
 		 * @brief Check if there is already prepared frame to display
-		 * 
-		 * @return true 
-		 * @return false 
+		 *
+		 * @return true
+		 * @return false
 		 */
 		inline bool hasLateFrameToRender()
-		{			
+		{
 			return readyToRender;
+		}
+
+		inline void dropLateFrame()
+		{
+			readyToRender = false;
 		}
 
 		inline void renderLeds(bool newFrame)
@@ -133,10 +143,10 @@ class Base
 			if (newFrame)
 				readyToRender = true;
 
-			if (readyToRender && 
-				(ledStrip1 != nullptr && ledStrip1->CanShow()) && 
+			if (readyToRender &&
+				(ledStrip1 != nullptr && ledStrip1->CanShow()) &&
 				!(ledStrip2 != nullptr && !ledStrip2->CanShow()))
-			{			
+			{
 				statistics.increaseShow();
 				readyToRender = false;
 
@@ -156,11 +166,11 @@ class Base
 						ledStrip1->SetPixelColor(pix, inputColor);
 					else
 					{
-						#if defined(SECOND_SEGMENT_REVERSED)								
+						#if defined(SECOND_SEGMENT_REVERSED)
 							ledStrip2->SetPixelColor(ledsNumber - pix - 1, inputColor);
 						#else
 							ledStrip2->SetPixelColor(pix - SECOND_SEGMENT_START_INDEX, inputColor);
-						#endif							
+						#endif
 					}
 				#else
 					ledStrip1->SetPixelColor(pix, inputColor);
@@ -168,7 +178,7 @@ class Base
 			}
 
 			return (pix + 1 < ledsNumber);
-		}		
+		}
 } base;
 
 #endif

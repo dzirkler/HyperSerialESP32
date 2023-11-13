@@ -2,7 +2,7 @@
 *
 *  MIT License
 *
-*  Copyright (c) 2022 awawa-dev
+*  Copyright (c) 2023 awawa-dev
 *
 *  https://github.com/awawa-dev/HyperSerialESP32
 *
@@ -28,8 +28,8 @@
 #ifndef MAIN_H
 #define MAIN_H
 
-#define MAX_BUFFER 6000
-#define HELLO_MESSAGE "\r\nWelcome!\r\nAwa driver 8."
+#define MAX_BUFFER (3013 * 3 + 1)
+#define HELLO_MESSAGE "\r\nWelcome!\r\nAwa driver 9."
 
 #include "calibration.h"
 #include "statistics.h"
@@ -38,11 +38,12 @@
 
 /**
  * @brief separete thread on core 1 for handling serial communication using cyclic buffer
- * 
+ *
  */
-void serialTaskHandler()
-{		
-	uint16_t incomingSize = min(SerialPort.available(), MAX_BUFFER);
+
+bool serialTaskHandler()
+{
+	uint16_t incomingSize = min(SerialPort.available(), MAX_BUFFER - 1);
 
 	if (incomingSize > 0)
 	{
@@ -53,57 +54,70 @@ void serialTaskHandler()
 		}
 		else
 		{
-			int left = MAX_BUFFER - base.queueEnd;				
+			int left = MAX_BUFFER - base.queueEnd;
 			SerialPort.read(&(base.buffer[base.queueEnd]), left);
 			SerialPort.read(&(base.buffer[0]), incomingSize - left);
 			base.queueEnd = incomingSize - left;
 		}
-	}	
+	}
+
+#if defined(LED_POWER_PIN)
+	powerControl.update(incomingSize > 0);
+#endif
+
+	return (incomingSize > 0);
+}
+
+void updateMainStatistics(unsigned long currentTime, unsigned long deltaTime, bool hasData)
+{
+	if (hasData && deltaTime >= 1000 && deltaTime <= 1025 && statistics.getGoodFrames() > 3)
+		statistics.update(currentTime);
+	else if (deltaTime > 1025)
+		statistics.lightReset(currentTime, hasData);
 }
 
 /**
  * @brief process received data on core 0
- * 
+ *
  */
 void processData()
-{	
+{
 	// update and print statistics
 	unsigned long currentTime = millis();
 	unsigned long deltaTime = currentTime - statistics.getStartTime();
 
-	if (base.queueCurrent != base.queueEnd && deltaTime >= 1000)
-	{
-		statistics.update(currentTime);
-	}
-	else if (deltaTime >= 3000)
+	updateMainStatistics(currentTime, deltaTime, base.queueCurrent != base.queueEnd);
+
+	if (statistics.getStartTime() + 5000 < millis())
 	{
 		frameState.setState(AwaProtocol::HEADER_A);
-		statistics.print(currentTime, base.processTaskHandle);
-		vTaskDelay(50);
-	}	
+	}
 
 	// render waiting frame if available
-	if (base.hasLateFrameToRender() && frameState.getState() == AwaProtocol::HEADER_A)
+	if (base.hasLateFrameToRender())
 		base.renderLeds(false);
 
 	// process received data
 	while (base.queueCurrent != base.queueEnd)
-	{			
+	{
 		byte input = base.buffer[base.queueCurrent++];
 
 		if (base.queueCurrent >= MAX_BUFFER)
-            base.queueCurrent = 0;
+		{
+			base.queueCurrent = 0;
+			yield();
+		}
 
 		switch (frameState.getState())
 		{
 		case AwaProtocol::HEADER_A:
-			// assume it's protocol version 1, verify it later			
+			// assume it's protocol version 1, verify it later
 			frameState.setProtocolVersion2(false);
-			if (input == 'A')			
+			if (input == 'A')
 				frameState.setState(AwaProtocol::HEADER_w);
 			break;
 
-		case AwaProtocol::HEADER_w:			
+		case AwaProtocol::HEADER_w:
 			if (input == 'w')
 				frameState.setState(AwaProtocol::HEADER_a);
 			else
@@ -124,7 +138,7 @@ void processData()
 			break;
 
 		case AwaProtocol::HEADER_HI:
-			// initialize new frame properties						
+			// initialize new frame properties
 			statistics.increaseTotal();
 			frameState.init(input);
 			frameState.setState(AwaProtocol::HEADER_LO);
@@ -138,7 +152,7 @@ void processData()
 		case AwaProtocol::HEADER_CRC:
 			// verify CRC and create/update LED driver if neccesery
 			if (frameState.getCRC() == input)
-			{				
+			{
 				uint16_t ledSize = frameState.getCount() + 1;
 
 				// sanity check
@@ -154,18 +168,18 @@ void processData()
 			}
 			else if (frameState.getCount() ==  0x2aa2 && (input == 0x15 || input == 0x35))
 			{
+				statistics.print(currentTime, base.processDataHandle, base.processSerialHandle);
+
 				if (input == 0x15)
-				{
 					SerialPort.println(HELLO_MESSAGE);
-					statistics.reset(deltaTime);
-				}
-				else
-					statistics.print(currentTime, base.processTaskHandle);
-					
+				delay(10);
+
+				currentTime = millis();
+				statistics.reset(currentTime);
 				frameState.setState(AwaProtocol::HEADER_A);
 			}
-			else							
-				frameState.setState(AwaProtocol::HEADER_A);			
+			else
+				frameState.setState(AwaProtocol::HEADER_A);
 			break;
 
 		case AwaProtocol::RED:
@@ -188,16 +202,16 @@ void processData()
 
 			#ifdef NEOPIXEL_RGBW
 				// calculate RGBW from RGB using provided calibration data
-				frameState.rgb2rgbw();				
+				frameState.rgb2rgbw();
 			#endif
 
 			// set pixel, increase the index and check if it was the last LED color to come
 			if (base.setStripPixel(frameState.getCurrentLedIndex(), frameState.color))
-			{				
+			{
 				frameState.setState(AwaProtocol::RED);
 			}
 			else
-			{				
+			{
 				if (frameState.isProtocolVersion2())
 					frameState.setState(AwaProtocol::VERSION2_GAIN);
 				else
@@ -255,16 +269,22 @@ void processData()
 			if (input == frameState.getFletcherExt())
 			{
 				statistics.increaseGood();
-				
+
 				base.renderLeds(true);
 
 				#ifdef NEOPIXEL_RGBW
 					// if received the calibration data, update it now
 					if (frameState.isProtocolVersion2())
 					{
-						frameState.updateIncomingCalibration();						
+						frameState.updateIncomingCalibration();
 					}
 				#endif
+
+				currentTime = millis();
+				deltaTime = currentTime - statistics.getStartTime();
+				updateMainStatistics(currentTime, deltaTime, true);
+
+				yield();
 			}
 
 			frameState.setState(AwaProtocol::HEADER_A);

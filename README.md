@@ -18,7 +18,7 @@ RGB to RGBW conversion is calibrated for the neutral white channel BTF SK6812 bu
 
 # Example of supported boards
 
-**ESP32 MH-ET Live (CH9102x/CP2104) and ESP32-S2 Lolin mini (CDC)**  
+**ESP32 MH-ET Live (CP2104 or CH9102x: 4Mb speed) and ESP32-S2 Lolin mini (CDC: 5Mb speed)**  
 <p align="center">
 <img src="https://user-images.githubusercontent.com/69086569/207587620-1c4c53c8-426c-486e-a6d9-d429fd1b050d.png" /><img src="https://user-images.githubusercontent.com/69086569/207587635-b7816329-0e29-47ee-a75a-bc6c41cdc51f.png" />
 </p>
@@ -28,12 +28,27 @@ RGB to RGBW conversion is calibrated for the neutral white channel BTF SK6812 bu
 Why the data integrity check was introduced which causes incompatibility with other software? Because at 2Mb speed many chip-makers allow few percent error in the transmission. And we do not want to have any distracting flashes. Broken frames are abandon without showing them. At 100Hz for 250 leds approximately 1-5% of the frames are broken.
   
 # Flashing
-  
+
+There are two versions of the firmware for ESP32 and ESP32-S2. The 'factory' (in the `recovery_firmware.zip` archive) and the 'base' one. Factory firmware should be flashed to offset 0x0, base firmware to offset 0x10000.
+
+**ESP32-S2 Lolin mini:**
+
+Requires using `esptool.py` to flash the firmware e.g.  
+
+ - `esptool.py write_flash 0x10000 firmware_esp32_s2_mini_SK6812_RGBW_COLD.bin` or
+ - `esptool.py write_flash 0x0 firmware_esp32_s2_mini_SK6812_RGBW_COLD.factory.bin`
+
+Troubleshooting: ESP32-S2 Lolin mini recovery procedure if the board is not detected or is malfunctioning.  
+1. Put the board into dfu mode using board buttons: press `Rst` + `0` buttons, then release `Rst`, next release `0`  
+Do not reset or disconnect the board until the end of the recovery procedure.
+2. Execute `esptool.py erase_flash`  
+3. Flash 'factory' version of the firmware e.g.  
+`esptool.py write_flash 0x0 firmware_esp32_s2_mini_SK6812_RGBW_COLD.factory.bin`  
+4. Reset the board manually with the `Rst` button. The board should be detected as a COM port in the system.
+
+**Generic ESP32:**
+
 Recommend to use [esphome-flasher](https://github.com/esphome/esphome-flasher/releases)  
-
-ESP32-S2 lolin mini requires special firmware version (also provided)
-
-Generic ESP32:
 
 For **RGBW LED strip** like RGBW SK6812 NEUTRAL white choose: *firmware_esp32_SK6812_RGBW_NEUTRAL.bin*  
   
@@ -48,11 +63,18 @@ If you want to disable your first LED because it's used as a sacrificial level s
 For the RGBW firmware the white channel is automatically calculated and R,G,B channels are corrected.  
   
 # Usage in HyperHDR
+
+**In HyperHDR `Image Processing→Smoothing→Update frequency` you should do not exceed the maximum capacity of the device. Read more here: [how to get statistics](https://github.com/awawa-dev/HyperHDR/wiki/HyperSerial)**
+
+To test the maximum performance in HyperHDR, enable `Image Processing→Smoothing→Continuous output`, set a high value for `Update Frequency` in the same tab and set any color in the `Remote Control` tab as the active effect. Get the statistics and optionally adjust `Update Frequency`. After testing, you need to disable `Continuous output`and set `Update frequency`" according to your results.
   
-Make sure you are using HyperHDR v19beta2 or above.  
-Set `Refresh time` to zero, `Baudrate` to 2000000 and you enabled `HyperHDR's AWA protocol`.  
+Configuring HyperHDR v19beta2 or above.
+- set `Refresh time` to zero
+- set `Baudrate` to 2000000
+- enabled `HyperHDR's AWA protocol`.  
+
 Enabling `White channel calibration` is optional, if you want to fine tune the white channel balance of your sk6812 RGBW LED strip.  
-`ESP8266/ESP32 handshake` could help you to properly initialize the ESP device and enables statistics available in the logs (you must stop the LED device first to get them).  
+`ESP8266/ESP32 handshake` could help you to properly initialize the ESP device and enables statistics output to the logs (you must stop the LED device first to get them).  
 
 ![obraz](https://user-images.githubusercontent.com/69086569/207109594-0493fe58-3530-46bb-a0a3-31a110475ed6.png)
 
@@ -60,7 +82,7 @@ Enabling `White channel calibration` is optional, if you want to fine tune the w
 # Compiling
   
 Currently we use PlatformIO to compile the project. Install [Visual Studio Code](https://code.visualstudio.com/) and add [PlatformIO plugin](https://platformio.org/).
-This environment will take care of everything and compile the firmware for you. Low-level LED strip support is provided by the https://github.com/Makuna/NeoPixelBus library.
+This environment will take care of everything and compile the firmware for you. Low-level LED strip support is provided by my highly optimizated (pre-fill I2S DMA modes, turbo I2S parallel mode for up to 2 segments etc) version of Neopixelbus library: [link](https://github.com/awawa-dev/NeoPixelBus).
 
 But there is also an alternative and an easier way. Just fork the project and enable its Github Action. Use the online editor to make changes to the ```platformio.ini``` file, for example change default pin-outs/speed or enable multi-segments support, and save it. Github Action will compile new firmware automatically in the Artifacts archive. It has never been so easy!
 
@@ -75,10 +97,10 @@ Tutorial: https://github.com/awawa-dev/HyperSerialESP32/wiki
 
 # Multi-Segment Wiring
 
-Proposed example of building a multisegment:
+Using parallel multi-segment allows you to double your Neopixel (e.g. sk6812 RGBW) LED strip refresh rate by dividing it into two smaller equal parts. Both smaller segments are perfectly in sync so you don't need to worry about it. Proposed example of building a multisegment:
 - Divide a long or dense strip of LEDs into 2 smaller equal parts. So `SECOND_SEGMENT_START_INDEX` in the HyperSerialESP32 firmware is the total number of LEDs divided by 2.
 - Build your first segment traditional way e.g. clockwise, so it starts somewhere in middle of the bottom of frame/TV and ends in the middle of the top of frame/TV
-- Start the second segment in the opposite direction to the first one e.g. counterclockwise (`SECOND_SEGMENT_REVERSED` option in the HyperSerialESP32 firmware configuration must be enabled). So it starts somewhere in the middle of the bottom of the frame/TV and ends in the middle of the top of the TV/frame. Both segments should be connected at the top but only 5v and ground ( NOT the data line).
+- Start the second segment in the opposite direction to the first one e.g. counterclockwise (`SECOND_SEGMENT_REVERSED` option in the HyperSerialESP32 firmware configuration must be enabled). So it starts somewhere in the middle of the bottom of the frame/TV and ends in the middle of the top of the TV/frame.  Both segments could be optionally connected if possible at the top but only 5v and ground ( NOT the data line).
 - The data line starts for both segments somewhere in the middle of the bottom of the TV/frame (where each of the LED strips starts)
 - Configuration in HyperHDR does not change! It's should be configured as one, single continues segment. All is done in HyperSerialESP32 firmware transparently and does not affect LED strip configuration in HyperHDR.
 
@@ -97,45 +119,37 @@ build_flags = -DNEOPIXEL_RGBW -DCOLD_WHITE -DDATA_PIN=2 ${env.build_flags} -DSEC
 build_flags = -DNEOPIXEL_RGB -DDATA_PIN=2 ${env.build_flags} -DSECOND_SEGMENT_START_INDEX=144 -DSECOND_SEGMENT_DATA_PIN=4 -DSECOND_SEGMENT_REVERSED
 ...
 ```
+Implementation example:
+- The diagram of the board for WS2812b/SK6812 including ESP32 and the SN74AHCT125N 74AHCT125 [level shifter](https://github.com/awawa-dev/HyperHDR/wiki/Level-Shifter).
+
+![HyperSPI](https://user-images.githubusercontent.com/85223482/222923979-f344349a-1f8b-4195-94ca-51721923359e.png)
+
+# External relay power control
+You can configure LED power pin in the `platformio.ini` to power off LEDs while not in use.
+Review the comments at the top of the file:
+* `LED_POWER_PIN` - This is the data pin external power control
+
+Note: For static color configuration this mechanism will turn off the LEDs. To counter this enable "Continuous Output" in HyperHDR "Smoothing" module. For esp32 and relay control, you may want to disable the "Handshake" option in the Adalight HyperHDR driver to avoid the relay immediately shutting down when resetting the device while initializing the connection.
 
 # Some benchmark results
 
-ESP32 MH-ET LIVE mini is capable of 4Mb serial port speed and ESP32-S2 lolin mini is capable of 5Mb. But to give equal chances all models were tested using the default speed of 2Mb.
+ESP32 MH-ET LIVE mini is capable of 4Mb serial port speed and ESP32-S2 lolin mini is capable of 5Mb. But to give equal chances for a single-segment mode all models were tested using the default speed of 2Mb which should saturate Neopixel data line. Parallel multi-segment mode uses the highest option available because communication performance is critical here.
 
-## Multi-segments can double your large sk6812/ws2812b setup refresh rate for free. All you need is to properly project & construct the LED strip and use HyperSerialESP32 v8.
+**Parallel multi-segments can double your large sk6812/ws2812b setup refresh rate for free. All you need is to properly project & construct the LED strip and use HyperSerialESP32 v9. Parallel communication provides perfect synchronization between Neopixel segments.**
 
-| LED strip / Device                                                               | ESP32<br>MH-ET LIVE mini |
-|----------------------------------------------------------------------------------|--------------------------|
-| 300LEDs<br>Refresh rate/continues output=100Hz<br>SECOND_SEGMENT_START_INDEX=150 |            93-97         |
-| 600LEDs<br>Refresh rate/continues output=100Hz<br>SECOND_SEGMENT_START_INDEX=300 |            78-79         |
-| 900LEDs<br>Refresh rate/continues output=100Hz<br>SECOND_SEGMENT_START_INDEX=450 |            55-56         |
+## ESP32 / ESP32-S2 multi segments
 
-## Comparing v6.1 and v8 version (single segment) refresh rate using MH-ET LIVE mini
+| Parallel multi-segment mode / Device                           | ESP32<br> MH-ET LIVE mini @ 4Mb speed |  ESP32-S2<br> Lolin mini @ 5Mb speed   |
+|---------------------------------------------------------------------------------------|--------------------------|------------------------------|
+| 300LEDs RGBW<br>Refresh rate/continues output=100Hz<br>SECOND_SEGMENT_START_INDEX=150 |            100           |               100            |
+| 600LEDs RGBW<br>Refresh rate/continues output=83Hz <br>SECOND_SEGMENT_START_INDEX=300 |             83           |                83            |
+| 900LEDs RGBW<br>Refresh rate/continues output=55Hz <br>SECOND_SEGMENT_START_INDEX=450 |             55           |                55            |
 
-| LED strip / Device                             | ESP32<br>MH-ET LIVE mini<br>HyperSerialESP32 v6.1 | ESP32<br>MH-ET LIVE mini<br>HyperSerialESP32 v8 |
-|------------------------------------------------|---------------------------------------------------|-------------------------------------------------|
-| 300LEDs<br>Refresh rate/continues output=100Hz |                       81-83                       |                      80-83                      |
-| 600LEDs<br>Refresh rate/continues output=60Hz  |                       39-40                       |                      41-42                      |
-| 900LEDs<br>Refresh rate/continues output=40Hz  |                       21-26                       |                      26-28                      |
+## ESP32 / ESP32-S2 single segment 
 
-## Comparing v6.1 and v8 version (single segment) refresh rate using generic ESP32 with CH340C
+| Single RGBW LED strip / Device                      | ESP32 MH-ET LIVE mini | generic ESP32 (CH340C) | ESP32-S2 lolin mini |
+|-----------------------------------------------------|-----------------------|------------------------|---------------------|
+| 300LEDs RGBW<br>Refresh rate / continues output=83Hz  |          83         |           83           |          83         |
+| 600LEDs RGBW<br>Refresh rate / continues output=42Hz  |          42         |           42           |          42         |
+| 900LEDs RGBW<br>Refresh rate / continues output=28Hz  |          28         |           28           |          28         |
 
-| LED strip / Device                             | ESP32 (CH340C)<br>HyperSerialESP32 v6.1 | ESP32 (CH340C)<br>HyperSerialESP32 v8 |
-|------------------------------------------------|-----------------------------------------|---------------------------------------|
-| 300LEDs<br>Refresh rate/continues output=100Hz |                  72-78                  |                 81-83                 |
-| 600LEDs<br>Refresh rate/continues output=60Hz  |                  33-38                  |                 39-42                 |
-| 900LEDs<br>Refresh rate/continues output=40Hz  |                  21-25                  |                 26-28                 |
-
-## ESP32-S2 lolin mini performance
-
-| LED strip / Device                             | ESP32-S2 lolin mini<br>HyperSerialESP32 v8 |
-|------------------------------------------------|--------------------------------------------|
-| 300LEDs<br>Refresh rate/continues output=100Hz |                    80-84                   |
-| 600LEDs<br>Refresh rate/continues output=60Hz  |                     42                     |
-| 900LEDs<br>Refresh rate/continues output=40Hz  |                    27-28                   |
-  
-# Disclaimer
-  
-You use it on your own risk.  
-Don't touch these firmwares if you don't know how to put the device in the programming mode if something goes wrong.  
-As per the MIT license, I assume no liability for any damage to you or any other person or equipment.  
